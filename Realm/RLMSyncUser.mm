@@ -94,13 +94,6 @@ PermissionChangeCallback RLMWrapPermissionStatusCallback(RLMPermissionStatusBloc
 
 @property (nonatomic, readwrite) NSURL *authenticationServer;
 
-/**
- All 'refresh handles' associated with Realms opened by this user. A refresh handle is
- an object that encapsulates the concept of periodically refreshing the Realm's access
- token before it expires. Tokens are indexed by their paths (e.g. `/~/path/to/realm`).
- */
-@property (nonatomic) NSMutableDictionary<NSString *, RLMSyncSessionRefreshHandle *> *refreshHandles;
-
 @end
 
 @implementation RLMSyncUser
@@ -126,7 +119,6 @@ PermissionChangeCallback RLMWrapPermissionStatusCallback(RLMPermissionStatusBloc
 - (instancetype)initWithAuthServer:(nullable NSURL *)authServer {
     if (self = [super init]) {
         self.authenticationServer = authServer;
-        self.refreshHandles = [NSMutableDictionary dictionary];
         _configMaker = std::make_unique<ConfigMaker>([](std::shared_ptr<SyncUser> user, std::string url) {
             RLMRealmConfiguration *config = [RLMRealmConfiguration defaultConfiguration];
             NSURL *objCUrl = [NSURL URLWithString:@(url.c_str())];
@@ -181,10 +173,9 @@ PermissionChangeCallback RLMWrapPermissionStatusCallback(RLMPermissionStatusBloc
         return;
     }
     _user->log_out();
-    for (id key in self.refreshHandles) {
-        [self.refreshHandles[key] invalidate];
+    if (self.identity) {
+        [[RLMSyncManager sharedManager] _invalidateRefreshHandlesForUserID:self.identity];
     }
-    [self.refreshHandles removeAllObjects];
 }
 
 - (nullable RLMSyncSession *)sessionForURL:(NSURL *)url {
@@ -300,10 +291,6 @@ PermissionChangeCallback RLMWrapPermissionStatusCallback(RLMPermissionStatusBloc
 
 #pragma mark - Private API
 
-- (void)_unregisterRefreshHandleForURLPath:(NSString *)path {
-    [self.refreshHandles removeObjectForKey:path];
-}
-
 - (NSString *)_refreshToken {
     if (!_user) {
         return nil;
@@ -318,11 +305,11 @@ PermissionChangeCallback RLMWrapPermissionStatusCallback(RLMPermissionStatusBloc
     NSURL *realmURL = [NSURL URLWithString:@(config.realm_url.c_str())];
     NSString *path = [realmURL path];
     REALM_ASSERT(realmURL && path);
-    [self.refreshHandles[path] invalidate];
-    self.refreshHandles[path] = [[RLMSyncSessionRefreshHandle alloc] initWithRealmURL:realmURL
-                                                                                 user:self
-                                                                              session:std::move(session)
-                                                                      completionBlock:completion];
+    RLMSyncSessionRefreshHandle *handle = [[RLMSyncSessionRefreshHandle alloc] initWithRealmURL:realmURL
+                                                                                           user:self
+                                                                                        session:std::move(session)
+                                                                                completionBlock:completion];
+    [[RLMSyncManager sharedManager] _registerRefreshHandle:handle path:path userID:self.identity];
 }
 
 - (std::shared_ptr<SyncUser>)_syncUser {

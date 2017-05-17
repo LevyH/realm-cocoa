@@ -20,7 +20,7 @@
 
 #import "RLMSyncUtil_Private.h"
 
-@class RLMSyncUser, RLMSyncConfiguration;
+@class RLMSyncUser, RLMSyncConfiguration, RLMSyncSessionRefreshHandle;
 
 // All private API methods are threadsafe and synchronized, unless denoted otherwise. Since they are expected to be
 // called very infrequently, this should pose no issues.
@@ -43,6 +43,14 @@ NS_ASSUME_NONNULL_BEGIN
                 errorClass:(RLMSyncSystemErrorKind)errorClass;
 
 - (NSArray<RLMSyncUser *> *)_allUsers;
+
+- (void)_invalidateRefreshHandlesForUserID:(NSString *)identity;
+
+- (void)_registerRefreshHandle:(RLMSyncSessionRefreshHandle *)handle
+                          path:(NSString *)path
+                        userID:(NSString *)identity;
+
+- (void)_unregisterRefreshHandleForURLPath:(NSString *)path userID:(NSString *)identity;
 
 + (void)resetForTesting;
 

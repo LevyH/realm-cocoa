@@ -42,8 +42,6 @@ NS_ASSUME_NONNULL_BEGIN
 - (std::shared_ptr<SyncUser>)_syncUser;
 - (nullable NSString *)_refreshToken;
 
-- (void)_unregisterRefreshHandleForURLPath:(NSString *)path;
-
 @end
 
 using PermissionChangeCallback = std::function<void(std::exception_ptr)>;

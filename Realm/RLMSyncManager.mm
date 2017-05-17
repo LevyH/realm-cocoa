@@ -20,6 +20,7 @@
 
 #import "RLMRealmConfiguration+Sync.h"
 #import "RLMSyncConfiguration_Private.hpp"
+#import "RLMSyncSessionRefreshHandle.h"
 #import "RLMSyncSession_Private.hpp"
 #import "RLMSyncUser_Private.hpp"
 #import "RLMSyncUtil_Private.hpp"
@@ -84,6 +85,15 @@ struct CocoaSyncLoggerFactory : public realm::SyncLoggerFactory {
 - (instancetype)initWithCustomRootDirectory:(nullable NSURL *)rootDirectory NS_DESIGNATED_INITIALIZER;
 
 @property (nonatomic, nullable, strong) NSNumber *globalSSLValidationDisabled;
+
+/**
+ A map of user IDs to dictionaries, each of which maps paths to 'refresh handles'.
+
+ A refresh handle is an object that encapsulates the concept of periodically
+ refreshing the Realm's access token before it expires. Tokens are indexed by their
+ paths (e.g. `/~/path/to/realm`).
+ */
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, RLMSyncSessionRefreshHandle *> *> *refreshHandleDictionaries;
 @end
 
 @implementation RLMSyncManager
@@ -102,6 +112,7 @@ static dispatch_once_t s_onceToken;
 
 - (instancetype)initWithCustomRootDirectory:(NSURL *)rootDirectory {
     if (self = [super init]) {
+        _refreshHandleDictionaries = [NSMutableDictionary dictionary];
         // Initialize the sync engine.
         SyncManager::shared().set_logger_factory(s_syncLoggerFactory);
         bool should_encrypt = !getenv("REALM_DISABLE_METADATA_ENCRYPTION") && !RLMIsRunningInPlayground();
@@ -205,6 +216,37 @@ static dispatch_once_t s_onceToken;
         [buffer addObject:[[RLMSyncUser alloc] initWithSyncUser:std::move(user)]];
     }
     return buffer;
+}
+
+- (void)_invalidateRefreshHandlesForUserID:(NSString *)identity {
+    NSMutableDictionary *handles = nil;
+    @synchronized(_refreshHandleDictionaries) {
+        handles = self.refreshHandleDictionaries[identity];
+        [self.refreshHandleDictionaries removeObjectForKey:identity];
+    }
+    for (NSString *path in handles) {
+        [handles[path] invalidate];
+    }
+}
+
+- (void)_registerRefreshHandle:(RLMSyncSessionRefreshHandle *)handle
+                          path:(NSString *)path
+                        userID:(NSString *)identity {
+    @synchronized(_refreshHandleDictionaries) {
+        NSMutableDictionary<NSString *, RLMSyncSessionRefreshHandle *> *handles = self.refreshHandleDictionaries[identity];
+        if (!handles) {
+            handles = [NSMutableDictionary dictionary];
+            self.refreshHandleDictionaries[identity] = handles;
+        }
+        [handles[path] invalidate];
+        handles[path] = handle;
+    }
+}
+
+- (void)_unregisterRefreshHandleForURLPath:(NSString *)path userID:(NSString *)identity {
+    @synchronized(_refreshHandleDictionaries) {
+        [self.refreshHandleDictionaries[identity] removeObjectForKey:path];
+    }
 }
 
 + (void)resetForTesting {
